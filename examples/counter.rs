@@ -1,3 +1,6 @@
+// TODO
+#![allow(dead_code)]
+
 extern crate elmlike;
 
 use elmlike::platform::*;
@@ -21,7 +24,7 @@ impl Program for Application {
     type Msg = Msg;
     type Cmd = Cmd;
 
-    fn init(&self, flags: Self::Flags) -> (Self::Model, Option<Self::Cmd>) {
+    fn init(&self, _flags: Self::Flags) -> (Self::Model, Option<Self::Cmd>) {
         (0, None)
     }
 

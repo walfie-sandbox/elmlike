@@ -1,8 +1,8 @@
 mod router;
 
+use self::router::{AsyncReceiver, AsyncRouter, Router};
+use futures::{Async, Future, Stream};
 use futures::sync::mpsc;
-use self::router::{AsyncRouter, Router};
-use futures::{Future, Stream};
 
 pub trait Program {
     type Flags;
@@ -15,24 +15,58 @@ pub trait Program {
     fn update(&mut self, model: &mut Self::Model, msg: Self::Msg) -> Option<Self::Cmd>;
 }
 
-pub struct AsyncWorker<P: Program> {
-    program: P,
-    model: P::Model,
-    msg_router: AsyncRouter<P::Msg>,
-    cmd_router: AsyncRouter<P::Cmd>,
+pub trait EffectManager {
+    type Msg;
+    type Cmd;
+
+    fn handle(&mut self, cmd: Self::Cmd, msg_router: AsyncRouter<Self::Msg>);
 }
 
-impl<P: Program> AsyncWorker<P> {
-    fn new(program: P, flags: P::Flags) -> Self {
+pub struct AsyncWorker<Msg, Cmd, P, E>
+where
+    P: Program,
+    E: EffectManager,
+{
+    program: P,
+    effect_manager: E,
+    model: P::Model,
+    msg_receiver: AsyncReceiver<Msg>,
+    cmd_receiver: AsyncReceiver<Cmd>,
+    msg_router: AsyncRouter<Msg>,
+    cmd_router: AsyncRouter<Cmd>,
+}
+
+impl<Msg, Cmd, P, E> AsyncWorker<Msg, Cmd, P, E>
+where
+    P: Program<Msg = Msg, Cmd = Cmd>,
+    E: EffectManager<Msg = Msg, Cmd = Cmd>,
+{
+    fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
         let (model, cmd) = program.init(flags);
         let (msg_router, msg_receiver) = router::async();
         let (cmd_router, cmd_receiver) = router::async();
 
         AsyncWorker {
             program,
+            effect_manager,
             model,
             msg_router,
             cmd_router,
+            msg_receiver,
+            cmd_receiver,
         }
+    }
+}
+
+impl<Msg, Cmd, P, E> Future for AsyncWorker<Msg, Cmd, P, E>
+where
+    P: Program<Msg = Msg, Cmd = Cmd>,
+    E: EffectManager<Msg = Msg, Cmd = Cmd>,
+{
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+        unimplemented!()
     }
 }
