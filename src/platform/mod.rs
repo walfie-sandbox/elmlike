@@ -9,7 +9,12 @@ pub trait Program {
     type Msg;
     type Cmd;
 
-    fn init(&self, flags: Self::Flags, commands: &AsyncRouter<Self::Cmd>) -> Self::Model;
+    fn init(
+        &self,
+        flags: Self::Flags,
+        messages: &AsyncRouter<Self::Msg>,
+        commands: &AsyncRouter<Self::Cmd>,
+    ) -> Self::Model;
 
     fn update(
         &mut self,
@@ -28,29 +33,28 @@ pub trait EffectManager {
 
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub struct AsyncWorker<Msg, Cmd, P, E, S>
+pub struct AsyncWorker<Msg, Cmd, P, E>
 where
     P: Program,
 {
     program: P,
     effect_manager: E,
     model: P::Model,
-    msg_receiver: ::futures::stream::Select<AsyncReceiver<Msg>, S>,
+    msg_receiver: AsyncReceiver<Msg>,
     cmd_receiver: AsyncReceiver<Cmd>,
     msg_router: AsyncRouter<Msg>,
     cmd_router: AsyncRouter<Cmd>,
 }
 
-impl<Msg, Cmd, P, E, S> AsyncWorker<Msg, Cmd, P, E, S>
+impl<Msg, Cmd, P, E> AsyncWorker<Msg, Cmd, P, E>
 where
     P: Program<Msg = Msg, Cmd = Cmd>,
     E: EffectManager<Msg = Msg, Cmd = Cmd>,
-    S: Stream<Item = Msg, Error = ()>,
 {
-    pub fn new(program: P, effect_manager: E, subscription: S, flags: P::Flags) -> Self {
+    pub fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
         let (msg_router, msg_receiver) = router::async();
         let (cmd_router, cmd_receiver) = router::async();
-        let model = program.init(flags, &cmd_router);
+        let model = program.init(flags, &msg_router, &cmd_router);
 
         AsyncWorker {
             program,
@@ -58,7 +62,7 @@ where
             model,
             msg_router,
             cmd_router,
-            msg_receiver: msg_receiver.select(subscription),
+            msg_receiver,
             cmd_receiver,
         }
     }
@@ -68,11 +72,10 @@ where
     }
 }
 
-impl<Msg, Cmd, P, E, S> Future for AsyncWorker<Msg, Cmd, P, E, S>
+impl<Msg, Cmd, P, E> Future for AsyncWorker<Msg, Cmd, P, E>
 where
     P: Program<Msg = Msg, Cmd = Cmd>,
     E: EffectManager<Msg = Msg, Cmd = Cmd>,
-    S: Stream<Item = Msg, Error = ()>,
 {
     type Item = ();
     type Error = ();

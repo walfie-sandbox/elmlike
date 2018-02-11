@@ -53,7 +53,7 @@ impl<T> Router<T> for AsyncRouter<T> {
     {
         let tx = self.clone();
         let send_stream = s.for_each(move |item: T| Ok(tx.send(item)));
-        let _ = task_executor().execute(send_stream); // TODO: log?
+        task_executor().execute(send_stream).unwrap(); // TODO: log?
     }
 }
 

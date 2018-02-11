@@ -1,12 +1,14 @@
 extern crate elmlike;
 extern crate futures;
+extern crate tokio;
 extern crate tokio_core;
 
 use elmlike::platform::*;
 use elmlike::platform::router::*;
 use futures::Stream;
+use std::io::BufRead;
 use std::time::Duration;
-use tokio_core::reactor::{Core, Interval};
+use tokio_core::reactor::{Core, Handle, Interval};
 
 struct Model {
     count: i32,
@@ -26,7 +28,9 @@ enum Msg {
     Print,
 }
 
-struct Application;
+struct Application {
+    handle: Handle,
+}
 
 impl Program for Application {
     type Flags = Flags;
@@ -34,8 +38,38 @@ impl Program for Application {
     type Msg = Msg;
     type Cmd = Cmd;
 
-    fn init(&self, flags: Self::Flags, commands: &AsyncRouter<Self::Cmd>) -> Self::Model {
+    fn init(
+        &self,
+        flags: Self::Flags,
+        messages: &AsyncRouter<Self::Msg>,
+        commands: &AsyncRouter<Self::Cmd>,
+    ) -> Self::Model {
         commands.send(Cmd::Print(flags.initial));
+
+        // Subscription that ticks once per second
+        let ticks = Interval::new(Duration::from_secs(1), &self.handle)
+            .unwrap()
+            .map_err(|_| ())
+            .map(|_| Msg::Print);
+
+        messages.send_stream(ticks);
+
+        let router = messages.clone();
+        std::thread::spawn(move || loop {
+            let input = std::io::stdin();
+
+            for line in input.lock().lines() {
+                for c in line.expect("failed to get line").chars() {
+                    match c {
+                        '+' => router.send(Msg::Increase),
+                        '-' => router.send(Msg::Decrease),
+                        _ => {}
+                    }
+                }
+
+                router.send(Msg::Print);
+            }
+        });
 
         Model {
             count: flags.initial,
@@ -76,36 +110,16 @@ impl EffectManager for Effects {
 }
 
 fn main() {
-    let mut core = Core::new().unwrap();
-
-    // Subscription that ticks once per second
-    let subscription = Interval::new(Duration::from_secs(1), &core.handle())
-        .unwrap()
-        .map_err(|_| ())
-        .map(|_| Msg::Print);
+    let core = Core::new().unwrap();
+    let app = Application {
+        handle: core.handle(),
+    };
 
     let flags = Flags { initial: 0 };
-    let worker = AsyncWorker::new(Application, Effects, subscription, flags);
 
-    let router = worker.router();
-
-    use std::io::BufRead;
-
-    std::thread::spawn(move || loop {
-        let input = std::io::stdin();
-
-        for line in input.lock().lines() {
-            for c in line.expect("failed to get line").chars() {
-                match c {
-                    '+' => router.send(Msg::Increase),
-                    '-' => router.send(Msg::Decrease),
-                    _ => {}
-                }
-            }
-
-            router.send(Msg::Print);
-        }
+    use tokio::executor::current_thread;
+    current_thread::run(move |_| {
+        let worker = AsyncWorker::new(app, Effects, flags);
+        current_thread::spawn(worker)
     });
-
-    core.run(worker).unwrap();
 }
