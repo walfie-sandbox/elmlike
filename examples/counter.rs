@@ -1,12 +1,12 @@
-// TODO
-#![allow(dead_code)]
-
 extern crate elmlike;
+extern crate futures;
 extern crate tokio_core;
 
 use elmlike::platform::*;
 use elmlike::platform::router::*;
-use tokio_core::reactor::Core;
+use futures::Stream;
+use std::time::Duration;
+use tokio_core::reactor::{Core, Interval};
 
 struct Model {
     count: i32,
@@ -66,7 +66,7 @@ impl EffectManager for Effects {
     type Msg = Msg;
     type Cmd = Cmd;
 
-    fn handle(&mut self, cmd: Self::Cmd, _msg_router: &AsyncRouter<Self::Msg>) {
+    fn handle(&mut self, cmd: Self::Cmd, _router: &AsyncRouter<Self::Msg>) {
         match cmd {
             Cmd::Print(value) => {
                 println!("{}", value);
@@ -76,10 +76,18 @@ impl EffectManager for Effects {
 }
 
 fn main() {
-    let flags = Flags { initial: 0 };
-    let worker = AsyncWorker::new(Application, Effects, flags);
+    let mut core = Core::new().unwrap();
 
-    let msg_router = worker.msg_router();
+    // Subscription that ticks once per second
+    let subscription = Interval::new(Duration::from_secs(1), &core.handle())
+        .unwrap()
+        .map_err(|_| ())
+        .map(|_| Msg::Print);
+
+    let flags = Flags { initial: 0 };
+    let worker = AsyncWorker::new(Application, Effects, subscription, flags);
+
+    let router = worker.router();
 
     use std::io::BufRead;
 
@@ -89,16 +97,15 @@ fn main() {
         for line in input.lock().lines() {
             for c in line.expect("failed to get line").chars() {
                 match c {
-                    '+' => msg_router.send(Msg::Increase),
-                    '-' => msg_router.send(Msg::Decrease),
+                    '+' => router.send(Msg::Increase),
+                    '-' => router.send(Msg::Decrease),
                     _ => {}
                 }
             }
 
-            msg_router.send(Msg::Print);
+            router.send(Msg::Print);
         }
     });
 
-    let mut core = Core::new().unwrap();
     core.run(worker).unwrap();
 }

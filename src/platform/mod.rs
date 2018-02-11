@@ -1,8 +1,7 @@
 pub mod router;
 
-use self::router::{AsyncReceiver, AsyncRouter, Router};
+use self::router::{AsyncReceiver, AsyncRouter};
 use futures::{Async, Future, Stream};
-use futures::sync::mpsc;
 
 pub trait Program {
     type Flags;
@@ -27,26 +26,28 @@ pub trait EffectManager {
     fn handle(&mut self, cmd: Self::Cmd, msg_router: &AsyncRouter<Self::Msg>);
 }
 
-pub struct AsyncWorker<Msg, Cmd, P, E>
+#[derive(Debug)]
+#[must_use = "futures do nothing unless polled"]
+pub struct AsyncWorker<Msg, Cmd, P, E, S>
 where
     P: Program,
-    E: EffectManager,
 {
     program: P,
     effect_manager: E,
     model: P::Model,
-    msg_receiver: AsyncReceiver<Msg>,
+    msg_receiver: ::futures::stream::Select<AsyncReceiver<Msg>, S>,
     cmd_receiver: AsyncReceiver<Cmd>,
     msg_router: AsyncRouter<Msg>,
     cmd_router: AsyncRouter<Cmd>,
 }
 
-impl<Msg, Cmd, P, E> AsyncWorker<Msg, Cmd, P, E>
+impl<Msg, Cmd, P, E, S> AsyncWorker<Msg, Cmd, P, E, S>
 where
     P: Program<Msg = Msg, Cmd = Cmd>,
     E: EffectManager<Msg = Msg, Cmd = Cmd>,
+    S: Stream<Item = Msg, Error = ()>,
 {
-    pub fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
+    pub fn new(program: P, effect_manager: E, subscription: S, flags: P::Flags) -> Self {
         let (msg_router, msg_receiver) = router::async();
         let (cmd_router, cmd_receiver) = router::async();
         let model = program.init(flags, &cmd_router);
@@ -57,20 +58,21 @@ where
             model,
             msg_router,
             cmd_router,
-            msg_receiver,
+            msg_receiver: msg_receiver.select(subscription),
             cmd_receiver,
         }
     }
 
-    pub fn msg_router(&self) -> AsyncRouter<Msg> {
+    pub fn router(&self) -> AsyncRouter<Msg> {
         self.msg_router.clone()
     }
 }
 
-impl<Msg, Cmd, P, E> Future for AsyncWorker<Msg, Cmd, P, E>
+impl<Msg, Cmd, P, E, S> Future for AsyncWorker<Msg, Cmd, P, E, S>
 where
     P: Program<Msg = Msg, Cmd = Cmd>,
     E: EffectManager<Msg = Msg, Cmd = Cmd>,
+    S: Stream<Item = Msg, Error = ()>,
 {
     type Item = ();
     type Error = ();
