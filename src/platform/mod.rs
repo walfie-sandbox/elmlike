@@ -78,18 +78,18 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+        // Process all `Cmd`s
         loop {
-            // Process all `Cmd`s
-            loop {
-                match self.cmd_receiver.poll()? {
-                    Async::Ready(Some(cmd)) => {
-                        self.effect_manager.handle(cmd, &self.msg_router);
-                    }
-                    _ => break,
+            match self.cmd_receiver.poll()? {
+                Async::Ready(Some(cmd)) => {
+                    self.effect_manager.handle(cmd, &self.msg_router);
                 }
+                _ => break,
             }
+        }
 
-            // Process `Msg`
+        // Process all `Msg`s
+        loop {
             match self.msg_receiver.poll()? {
                 Async::Ready(Some(msg)) => {
                     self.program.update(&mut self.model, msg, &self.cmd_router);
@@ -97,7 +97,9 @@ where
                 Async::Ready(None) => {
                     return Ok(Async::Ready(()));
                 }
-                Async::NotReady => {}
+                Async::NotReady => {
+                    return Ok(Async::NotReady);
+                }
             }
         }
     }
