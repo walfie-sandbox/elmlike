@@ -33,23 +33,23 @@ pub trait EffectManager {
 
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub struct AsyncWorker<Msg, Cmd, P, E>
+pub struct AsyncWorker<P, E>
 where
     P: Program,
 {
     program: P,
     effect_manager: E,
     model: P::Model,
-    msg_receiver: AsyncReceiver<Msg>,
-    cmd_receiver: AsyncReceiver<Cmd>,
-    msg_router: AsyncRouter<Msg>,
-    cmd_router: AsyncRouter<Cmd>,
+    msg_receiver: AsyncReceiver<P::Msg>,
+    cmd_receiver: AsyncReceiver<P::Cmd>,
+    msg_router: AsyncRouter<P::Msg>,
+    cmd_router: AsyncRouter<P::Cmd>,
 }
 
-impl<Msg, Cmd, P, E> AsyncWorker<Msg, Cmd, P, E>
+impl<P, E> AsyncWorker<P, E>
 where
-    P: Program<Msg = Msg, Cmd = Cmd>,
-    E: EffectManager<Msg = Msg, Cmd = Cmd>,
+    P: Program,
+    E: EffectManager<Msg = P::Msg, Cmd = P::Cmd>,
 {
     pub fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
         let (msg_router, msg_receiver) = router::async();
@@ -67,15 +67,15 @@ where
         }
     }
 
-    pub fn router(&self) -> AsyncRouter<Msg> {
+    pub fn router(&self) -> AsyncRouter<P::Msg> {
         self.msg_router.clone()
     }
 }
 
-impl<Msg, Cmd, P, E> Future for AsyncWorker<Msg, Cmd, P, E>
+impl<P, E> Future for AsyncWorker<P, E>
 where
-    P: Program<Msg = Msg, Cmd = Cmd>,
-    E: EffectManager<Msg = Msg, Cmd = Cmd>,
+    P: Program,
+    E: EffectManager<Msg = P::Msg, Cmd = P::Cmd>,
 {
     type Item = ();
     type Error = ();
