@@ -1,14 +1,14 @@
 extern crate elmlike;
 extern crate futures;
 extern crate tokio;
-extern crate tokio_core;
+extern crate tokio_timer;
 
 use elmlike::platform::*;
 use elmlike::platform::router::*;
 use futures::Stream;
 use std::io::BufRead;
 use std::time::Duration;
-use tokio_core::reactor::{Core, Handle, Interval};
+use tokio_timer::Timer;
 
 struct Model {
     count: i32,
@@ -28,9 +28,7 @@ enum Msg {
     Print,
 }
 
-struct Application {
-    handle: Handle,
-}
+struct Application;
 
 impl Program for Application {
     type Flags = Flags;
@@ -46,9 +44,8 @@ impl Program for Application {
     ) -> Self::Model {
         commands.send(Cmd::Print(flags.initial));
 
-        // Subscription that ticks once per second
-        let ticks = Interval::new(Duration::from_secs(1), &self.handle)
-            .unwrap()
+        let ticks = Timer::default()
+            .interval(Duration::from_secs(1))
             .map_err(|_| ())
             .map(|_| Msg::Print);
 
@@ -110,16 +107,11 @@ impl EffectManager for Effects {
 }
 
 fn main() {
-    let core = Core::new().unwrap();
-    let app = Application {
-        handle: core.handle(),
-    };
-
     let flags = Flags { initial: 0 };
 
     use tokio::executor::current_thread;
     current_thread::run(move |_| {
-        let worker = AsyncWorker::new(app, Effects, flags);
+        let worker = AsyncWorker::new(Application, Effects, flags);
         current_thread::spawn(worker)
     });
 }
