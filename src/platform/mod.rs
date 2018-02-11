@@ -1,4 +1,4 @@
-mod router;
+pub mod router;
 
 use self::router::{AsyncReceiver, AsyncRouter, Router};
 use futures::{Async, Future, Stream};
@@ -10,9 +10,14 @@ pub trait Program {
     type Msg;
     type Cmd;
 
-    fn init(&self, flags: Self::Flags) -> (Self::Model, Option<Self::Cmd>);
+    fn init(&self, flags: Self::Flags, commands: &AsyncRouter<Self::Cmd>) -> Self::Model;
 
-    fn update(&mut self, model: &mut Self::Model, msg: Self::Msg) -> Option<Self::Cmd>;
+    fn update(
+        &mut self,
+        model: &mut Self::Model,
+        msg: Self::Msg,
+        commands: &AsyncRouter<Self::Cmd>,
+    );
 }
 
 pub trait EffectManager {
@@ -41,10 +46,10 @@ where
     P: Program<Msg = Msg, Cmd = Cmd>,
     E: EffectManager<Msg = Msg, Cmd = Cmd>,
 {
-    fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
-        let (model, cmd) = program.init(flags);
+    pub fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
         let (msg_router, msg_receiver) = router::async();
         let (cmd_router, cmd_receiver) = router::async();
+        let model = program.init(flags, &cmd_router);
 
         AsyncWorker {
             program,
@@ -55,6 +60,10 @@ where
             msg_receiver,
             cmd_receiver,
         }
+    }
+
+    pub fn msg_router(&self) -> AsyncRouter<Msg> {
+        self.msg_router.clone()
     }
 }
 
@@ -78,17 +87,15 @@ where
                 }
             }
 
-            // Process all `Msg`s
-            loop {
-                match self.msg_receiver.poll()? {
-                    Async::Ready(Some(msg)) => {
-                        self.program.update(&mut self.model, msg);
-                    }
-                    Async::Ready(None) => {
-                        return Ok(Async::Ready(()));
-                    }
-                    Async::NotReady => break,
+            // Process `Msg`
+            match self.msg_receiver.poll()? {
+                Async::Ready(Some(msg)) => {
+                    self.program.update(&mut self.model, msg, &self.cmd_router);
                 }
+                Async::Ready(None) => {
+                    return Ok(Async::Ready(()));
+                }
+                Async::NotReady => {}
             }
         }
     }
