@@ -1,4 +1,4 @@
 #[macro_use]
 extern crate futures;
 
-pub mod framework;
+pub mod platform;
