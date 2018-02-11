@@ -1,4 +1,4 @@
-use futures::{Async, Stream};
+use futures::{Async, Poll, Sink, StartSend, Stream};
 use futures::sync::mpsc;
 
 pub trait Router<T> {
@@ -22,6 +22,19 @@ impl<T> Clone for AsyncRouter<T> {
 impl<T> Router<T> for AsyncRouter<T> {
     fn send(&self, msg: T) {
         let _ = self.0.unbounded_send(msg);
+    }
+}
+
+impl<T> Sink for AsyncRouter<T> {
+    type SinkItem = T;
+    type SinkError = ();
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.0.start_send(item).map_err(|_| ())
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.0.poll_complete().map_err(|_| ())
     }
 }
 
