@@ -5,6 +5,7 @@ authors = ["Walfie <walfington@gmail.com>"]
 
 [dependencies]
 futures = "0.1"
+tokio = "0.1"
 
 [dev-dependencies]
 tokio-core = "0.1"

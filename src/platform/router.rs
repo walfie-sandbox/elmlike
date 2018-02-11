@@ -1,8 +1,20 @@
-use futures::{Async, Poll, Sink, StartSend, Stream};
+use futures::{Async, Future, Stream};
+use futures::future::Executor;
 use futures::sync::mpsc;
+use tokio::executor::current_thread::task_executor;
 
 pub trait Router<T> {
     fn send(&self, msg: T);
+
+    fn send_future<F>(&self, f: F)
+    where
+        F: Future<Item = T, Error = ()> + 'static,
+        T: 'static;
+
+    fn send_stream<S>(&self, s: S)
+    where
+        S: Stream<Item = T, Error = ()> + 'static,
+        T: 'static;
 }
 
 pub fn async<T>() -> (AsyncRouter<T>, AsyncReceiver<T>) {
@@ -23,18 +35,25 @@ impl<T> Router<T> for AsyncRouter<T> {
     fn send(&self, msg: T) {
         let _ = self.0.unbounded_send(msg);
     }
-}
 
-impl<T> Sink for AsyncRouter<T> {
-    type SinkItem = T;
-    type SinkError = ();
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.0.start_send(item).map_err(|_| ())
+    fn send_future<F>(&self, f: F)
+    where
+        F: Future<Item = T, Error = ()> + 'static,
+        T: 'static,
+    {
+        let tx = self.clone();
+        let send_future = f.map(move |item: T| tx.send(item));
+        let _ = task_executor().execute(send_future); // TODO: log?
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        self.0.poll_complete().map_err(|_| ())
+    fn send_stream<S>(&self, s: S)
+    where
+        S: Stream<Item = T, Error = ()> + 'static,
+        T: 'static,
+    {
+        let tx = self.clone();
+        let send_stream = s.for_each(move |item: T| Ok(tx.send(item)));
+        let _ = task_executor().execute(send_stream); // TODO: log?
     }
 }
 
