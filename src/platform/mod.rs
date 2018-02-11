@@ -19,7 +19,7 @@ pub trait EffectManager {
     type Msg;
     type Cmd;
 
-    fn handle(&mut self, cmd: Self::Cmd, msg_router: AsyncRouter<Self::Msg>);
+    fn handle(&mut self, cmd: Self::Cmd, msg_router: &AsyncRouter<Self::Msg>);
 }
 
 pub struct AsyncWorker<Msg, Cmd, P, E>
@@ -67,6 +67,29 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        unimplemented!()
+        loop {
+            // Process all `Cmd`s
+            loop {
+                match self.cmd_receiver.poll()? {
+                    Async::Ready(Some(cmd)) => {
+                        self.effect_manager.handle(cmd, &self.msg_router);
+                    }
+                    _ => break,
+                }
+            }
+
+            // Process all `Msg`s
+            loop {
+                match self.msg_receiver.poll()? {
+                    Async::Ready(Some(msg)) => {
+                        self.program.update(&mut self.model, msg);
+                    }
+                    Async::Ready(None) => {
+                        return Ok(Async::Ready(()));
+                    }
+                    Async::NotReady => break,
+                }
+            }
+        }
     }
 }
