@@ -1,6 +1,6 @@
-pub mod router;
+mod mailbox;
 
-use self::router::{AsyncReceiver, AsyncRouter};
+pub use self::mailbox::{Inbox, Outbox};
 use futures::{Async, Future, Stream};
 
 pub trait Program {
@@ -12,67 +12,58 @@ pub trait Program {
     fn init(
         &self,
         flags: Self::Flags,
-        messages: &AsyncRouter<Self::Msg>,
-        commands: &AsyncRouter<Self::Cmd>,
+        messages: &Outbox<Self::Msg>,
+        commands: &Outbox<Self::Cmd>,
     ) -> Self::Model;
 
-    fn update(
-        &mut self,
-        model: &mut Self::Model,
-        msg: Self::Msg,
-        commands: &AsyncRouter<Self::Cmd>,
-    );
+    fn update(&mut self, model: &mut Self::Model, msg: Self::Msg, cmd_outbox: &Outbox<Self::Cmd>);
 }
 
 pub trait EffectManager {
     type Msg;
     type Cmd;
 
-    fn handle(&mut self, cmd: Self::Cmd, msg_router: &AsyncRouter<Self::Msg>);
+    fn handle(&mut self, cmd: Self::Cmd, msg_outbox: &Outbox<Self::Msg>);
 }
 
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub struct AsyncWorker<P, E>
+pub struct Worker<P, E>
 where
     P: Program,
 {
     program: P,
     effect_manager: E,
     model: P::Model,
-    msg_receiver: AsyncReceiver<P::Msg>,
-    cmd_receiver: AsyncReceiver<P::Cmd>,
-    msg_router: AsyncRouter<P::Msg>,
-    cmd_router: AsyncRouter<P::Cmd>,
+    msg_inbox: Inbox<P::Msg>,
+    cmd_inbox: Inbox<P::Cmd>,
+    msg_outbox: Outbox<P::Msg>,
+    cmd_outbox: Outbox<P::Cmd>,
 }
 
-impl<P, E> AsyncWorker<P, E>
+impl<P, E> Worker<P, E>
 where
     P: Program,
     E: EffectManager<Msg = P::Msg, Cmd = P::Cmd>,
 {
     pub fn new(program: P, effect_manager: E, flags: P::Flags) -> Self {
-        let (msg_router, msg_receiver) = router::async();
-        let (cmd_router, cmd_receiver) = router::async();
-        let model = program.init(flags, &msg_router, &cmd_router);
+        let (msg_outbox, msg_inbox) = mailbox::new();
+        let (cmd_outbox, cmd_inbox) = mailbox::new();
+        let model = program.init(flags, &msg_outbox, &cmd_outbox);
 
-        AsyncWorker {
+        Worker {
             program,
             effect_manager,
             model,
-            msg_router,
-            cmd_router,
-            msg_receiver,
-            cmd_receiver,
+            msg_outbox,
+            cmd_outbox,
+            msg_inbox,
+            cmd_inbox,
         }
-    }
-
-    pub fn router(&self) -> AsyncRouter<P::Msg> {
-        self.msg_router.clone()
     }
 }
 
-impl<P, E> Future for AsyncWorker<P, E>
+impl<P, E> Future for Worker<P, E>
 where
     P: Program,
     E: EffectManager<Msg = P::Msg, Cmd = P::Cmd>,
@@ -83,9 +74,9 @@ where
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         // Process all `Cmd`s
         loop {
-            match self.cmd_receiver.poll()? {
+            match self.cmd_inbox.poll()? {
                 Async::Ready(Some(cmd)) => {
-                    self.effect_manager.handle(cmd, &self.msg_router);
+                    self.effect_manager.handle(cmd, &self.msg_outbox);
                 }
                 _ => break,
             }
@@ -93,9 +84,9 @@ where
 
         // Process all `Msg`s
         loop {
-            match self.msg_receiver.poll()? {
+            match self.msg_inbox.poll()? {
                 Async::Ready(Some(msg)) => {
-                    self.program.update(&mut self.model, msg, &self.cmd_router);
+                    self.program.update(&mut self.model, msg, &self.cmd_outbox);
                 }
                 Async::Ready(None) => {
                     return Ok(Async::Ready(()));
