@@ -3,6 +3,8 @@ mod mailbox;
 pub use self::mailbox::{Inbox, Outbox};
 use futures::{Async, Future, Stream};
 
+// Loosely based on Elm Platform
+// http://package.elm-lang.org/packages/elm-lang/core/5.1.1/Platform
 pub trait Program {
     type Flags;
     type Model;
