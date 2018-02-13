@@ -1,3 +1,4 @@
+// This example is incomplete and I'm too lazy to fix it for now
 extern crate elmlike;
 extern crate futures;
 extern crate hyper;
@@ -5,8 +6,11 @@ extern crate tokio;
 
 use elmlike::platform::*;
 use futures::{Future, Stream};
+use futures::sync::mpsc;
+use hyper::Chunk;
 use hyper::header::ContentLength;
 use hyper::server::{Http, Request, Response, Service};
+use std::cell::RefCell;
 
 struct Model {
     messages: Vec<String>,
@@ -54,17 +58,22 @@ impl Program for Application {
     }
 }
 
-struct Server;
+struct Effects {}
 
-impl EffectManager for Server {
+impl EffectManager for Effects {
     type Msg = Msg;
     type Cmd = Cmd;
 
     fn handle(&mut self, cmd: Self::Cmd, _msg_outbox: &Outbox<Self::Msg>) {}
 }
 
+struct Broadcast {
+    name: String,
+    rx: RefCell<Option<mpsc::Receiver<Result<Chunk, hyper::Error>>>>,
+}
+
 const PHRASE: &'static str = "HELLO WORLD";
-impl Service for Server {
+impl Service for Broadcast {
     // boilerplate hooking up hyper's server types
     type Request = Request;
     type Response = Response;
@@ -74,13 +83,10 @@ impl Service for Server {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, _req: Request) -> Self::Future {
-        // We're currently ignoring the Request
-        // And returning an 'ok' Future, which means it's ready
-        // immediately, and build a Response with the 'PHRASE' body.
         Box::new(futures::future::ok(
             Response::new()
                 .with_header(ContentLength(PHRASE.len() as u64))
-                .with_body(PHRASE),
+                .with_body(self.rx.borrow_mut().take().unwrap()),
         ))
     }
 }
@@ -89,17 +95,23 @@ fn main() {
     let addr = "127.0.0.1:3000".parse().unwrap();
     let listener = tokio::net::TcpListener::bind(&addr).expect("failed to bind TcpListener");
 
-    let server = std::rc::Rc::new(Server);
+    let effects = Effects {};
 
     let flags = ();
 
     use tokio::executor::current_thread;
     current_thread::run(move |_| {
-        let http = Http::<hyper::Chunk>::new();
+        let http = Http::<Chunk>::new();
         let server_future = listener
             .incoming()
             .for_each(move |sock| {
-                let conn = http.serve_connection(sock, server.clone())
+                let remote_addr = sock.peer_addr().expect("peer_addr");
+                let (tx, rx) = mpsc::channel(1024);
+                let broadcast = Broadcast {
+                    name: remote_addr.to_string(),
+                    rx: RefCell::new(Some(rx)),
+                };
+                let conn = http.serve_connection(sock, broadcast)
                     .map(|_| ())
                     .map_err(|_| ());
                 current_thread::spawn(conn);
@@ -108,7 +120,7 @@ fn main() {
             .map_err(|_| ());
         current_thread::spawn(server_future);
 
-        let worker = Worker::new(Application, Server, flags);
+        let worker = Worker::new(Application, effects, flags);
         current_thread::spawn(worker);
 
         println!("Listening on {}", addr);
