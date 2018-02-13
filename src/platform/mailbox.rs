@@ -1,6 +1,8 @@
 use futures::{Async, Future, IntoFuture, Stream};
 use futures::future::Executor;
 use futures::sync::mpsc;
+// Currently we assume current thread as the task executor. Could be
+// refactored to be more generic over Executor
 use tokio::executor::current_thread::task_executor;
 
 pub(crate) fn new<T>() -> (Outbox<T>, Inbox<T>) {
@@ -29,7 +31,7 @@ impl<T> Outbox<T> {
     {
         let tx = self.clone();
         let send_future = f.into_future().map(move |item: T| tx.send(item));
-        let _ = task_executor().execute(send_future); // TODO: log?
+        task_executor().execute(send_future).unwrap(); // TODO: log?
     }
 
     pub fn send_stream<S>(&self, s: S)
